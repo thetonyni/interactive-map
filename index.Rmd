@@ -1,0 +1,415 @@
+---
+output: md_document
+always_allow_html: yes
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(htmltools)
+library(tidyverse)
+library(ggmap)
+library(leaflet)
+library(tigris)
+library(gpclib)
+library(maptools)
+library(mapproj)
+library(ggthemes)
+library(htmltools)
+library(xtable)
+library(knitr)
+
+college <- read_csv(file = 'data/collegescorecard1617.csv')
+countydata <- read_csv(file = 'data/county_2016.csv')
+statedata <- read_csv(file = 'data/state_2016.csv')
+countyvoting2016 <- read_csv(file = 'data/countypresidentialvoting2016.csv')
+countynamesgeoid <- read_csv(file = 'data/countynames_geoid.csv')
+collegeinformation <- read_csv(file = 'data/popup2.csv')
+table <- read_csv(file = 'data/popup2.csv')
+ohio2<-read_csv(file='data/ohiocontributions.csv')
+texas2<-read_csv(file='data/texascontributions.csv')
+newyork2<-read_csv(file='data/nycontributions.csv')
+combined4 <- read_csv(file = 'data/combined4.csv')
+```
+
+# Introduction
+
+Our project looks at contributions to political campaigns by members of various institutions in the states of New York, Ohio, and Texas. Using an interactive map, our project compares the party leanings of these donations in comparison to the regions in which the institutions reside. We selected a handful of institutions in each state that were diverse in terms of size, location (urban vs. rural), and regional political affiliation. The state of New York serves as an overwhelmingly Democratic state, while Texas serves as a Republican state and Ohio serves as a swing state. 
+
+# Why should anyone care about this?
+
+There is a commonly-held belief that institutions are heavily liberal, so we hope to explore whether or not this is true by doing a deep dive into political donations. Futhermore, we thought it would be interesting to see whether the truth of this assumption depends on the political environment geographically surrounding a given institution. We were motivated by many political controversies on our own campus in recent years, such as the Amherst Uprising, the defunding of the Amherst Republicans Club, and the publication of the Office of Diversity and Inclusion’s Common Language Guide.
+
+We quantified the political identity of institutions by exploring which campaigns and candidates they donate too. We know that since we only looked at the donation habits of the employees at the college, this is just an estimate of the true political identity of an instution.
+
+
+# Data Sources
+
+
+### 2016/2017 College Scorecard Data 
+* Obtained from: https://collegescorecard.ed.gov/data/
+
+### FEC Campaign Financing, Budgeting, and Spending Data 
+* Publicly Accessible by anyone at: https://www.fec.gov/data/receipts/individual-contributions/?two_year_transaction_period=2020&min_date=01%2F01%2F2019&max_date=12%2F31%2F2020
+* This dataset is readily downloaded as a csv from the ‘export’ function on the website.
+
+### Ballotpedia 
+* A digital encyclopedia of American politics and elections run by a nonpartisan nonprofit organization.
+* Used to manually classify donations from FEC data (above) as democratic, republican, nonpartisan, or 3rd party
+
+### 2016 County Level Census Data (from BigQuery) 
+* Google’s Big Query provides a public dataset regarding US Census information on demographics, populations, etc. in certain years on a year by year basis that can be accessed from the link below:
+* https://console.cloud.google.com/bigquery?project=bigquery-public-data&p=bigquery-public-data&d=census_bureau_acs&t=county_2016_1yr&page=table
+
+### 2016 State Level Census Data (from BigQuery) 
+* Google’s Big Query provides a public dataset regarding US Census information on demographics, populations, etc. in certain years on a year by year basis that can be accessed from the link below:
+* https://console.cloud.google.com/bigquery?project=bigquery-public-data&p=bigquery-public-data&d=census_bureau_acs&t=state_2016_1yr&page=table
+* https://console.cloud.google.com/bigquery?project=bigquery-public-data&p=bigquery-public-data&d=census_bureau_acs&t=state_2016_1yr&page=table
+
+### US General Election Presidential Results 
+* https://github.com/tonmcg/US_County_Level_Election_Results_08-16 
+
+### County Names and GEOID’s
+* https://api.census.gov/data/2016/cbp?get=NAICS2012_TTL,GEO_TTL,EMP,LFO_TTL,GEO_ID,ESTAB&for=county
+
+# Variables
+
+### From the College Scorecard Data, we used: 
+* Institution Name 
+* City
+* State Abbreviation
+
+### From the FEC’s data on individual contributions, we used
+* Contributor Name
+* Recipient (the group or political committee receiving the donation)
+* State (that the contributor resides in)
+* Employer (Institution the donor belongs to)
+* Occupation (of the donor)
+
+
+### From Ballotpedia, we used:
+* Organization Name
+* Political Affiliation (democratic, republican, nonpartisan, and 3rd party)
+
+### From BigQuery’s ‘census_bureau_acs’ ‘county_2016_1yr’ dataset:
+* GEOID Code
+* Median Income of the County ($)
+
+### From the ‘county_2018_1yr’ dataset, we can collect the same type of information as above, except on a state-wide basis
+* GEOID Code 
+* Median Income of the County ($)
+
+### From the US General Election Presidential Results we used:
+* Percentage Democratic Votes 
+* Percentage Republican Votes
+* State Abbreviation
+* County Name
+
+### From the County Names and GEOID’s dataset, we used:
+* County Name
+* State Name
+* GEOID Code
+
+
+# Results
+
+Our map serves to show how colleges donated and counties voted. The interactivity allows for one to click on a county or college and view specific data. We also perused our data a little farther and found a few interesting caveats. The following analyses explore who is donating, and how many donations are coming from each of the 28 instiutions.
+
+
+```{r, include=FALSE}
+#calculating the difference and using that in order to calculate 
+
+countyvoting2016updated <- countyvoting2016 %>%
+  mutate(diffDR = per_dem - per_gop)
+
+collegeinformation2 <- collegeinformation %>%
+  mutate(Percentage_Democratic = Proportion_Dem_Donations*100, 
+         Percentage_Republican = Proportion_Rep_Donations*100, 
+         Percentage_Nonpartisan = Proportion_Nonpartisan_Donations*100) %>%
+  mutate(collegediffDR = Percentage_Democratic - Percentage_Republican) %>%
+  mutate(majority = case_when(
+    (collegediffDR > 0.5) ~ "Democratic_Majority",
+    (collegediffDR < 0.5) ~ "Republican_Majority",
+    (collegediffDR == 0.5) ~ "No_Majority")
+  )
+```
+
+```{r, message = FALSE, include = FALSE, warning=FALSE}
+#making shape file for TX, NY, and OH
+texasshapefile <- tracts(state = '48')
+newyorkshapefile <- tracts(state = '36')
+ohioshapefile <- tracts(state = '39')
+```
+
+```{r, echo=FALSE, warning=FALSE}
+texas <- combined4 %>%
+  filter(str_detect(geo_id, '^48')) %>% #match anything that starts with 48 (texas)
+  select(GEO_ID, state, county, county_name, geo_id, 
+         percentage_dem, percentage_rep, diffDR, median_income)
+
+newyork <- combined4 %>%
+  filter(str_detect(geo_id, '^36')) %>% #match anything that starts with 36 (new york)
+  select(GEO_ID, state, county, county_name, geo_id, 
+         percentage_dem, percentage_rep, diffDR, median_income)
+
+ohio <- combined4 %>%
+  filter(str_detect(geo_id, '^39')) %>% #match anything that starts with 39 (ohio)
+  select(GEO_ID, state, county, county_name, geo_id, 
+         percentage_dem, percentage_rep, diffDR, median_income)
+```
+
+```{r, echo=FALSE, warning=FALSE}
+texas_dat <- geo_join(texasshapefile, texas, "COUNTYFP", "county")
+newyork_dat <- geo_join(newyorkshapefile, newyork, "COUNTYFP", "county")
+ohio_dat <- geo_join(ohioshapefile, ohio, "COUNTYFP", "county")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+texascollege <- collegeinformation2 %>%
+  filter(StateAbbr == "TX")
+newyorkcollege <- collegeinformation2 %>%
+  filter(StateAbbr == "NY")
+ohiocollege <- collegeinformation2 %>%
+  filter(StateAbbr == "OH")
+```
+
+```{r, include=FALSE, warning=FALSE}
+partyIcons <- iconList(Democratic_Majority = 
+                         makeIcon("democratdonkey.png", iconWidth = 40, iconHeight = 40),
+                       Republican_Majority = 
+                         makeIcon("republicanelephant.png", iconWidth = 40, iconHeight =40),
+                       No_Majority = 
+                         makeIcon("Thinking Emoji.png", iconWidth = 40, iconHeight = 40))
+```
+
+```{r, echo=FALSE, warning=FALSE}
+# colorNumeric is a function from the leaflet package
+mypaltx <- colorNumeric(
+  palette = "RdBu",
+  domain = texas_dat$diffDR
+)
+
+texasmap <-leaflet(texascollege) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(lat = 31, lng = -100, zoom = 6) %>%
+  # get lat and long for Antonio's from geocode() in first code chunk above
+  addMarkers(~Lng, ~Lat,
+             popup = paste0("College Name: ", texascollege$Name, "<br>",
+                                        "Size: ", texascollege$Size, "<br>",
+                                        "Type: ", texascollege$Type, "<br>",
+                            "Number of Donations: ", texascollege$Donations, "<br>",
+                            "Percentage Democratic Donations: ", texascollege$Percentage_Democratic, "<br>",
+                            "Percentage Republican Donations: ", texascollege$Percentage_Republican, "<br>",
+                            "Percentage Nonpartisan Donations: ", texascollege$Percentage_Nonpartisan),
+             icon = ~partyIcons[majority])%>%
+  addPolygons(data = texas_dat, 
+              fillColor = ~mypaltx(diffDR),
+              color = "#b2aeae", #color needs to be in hex format
+              fillOpacity = 0.7, 
+              weight = 1, 
+              smoothFactor = 0.2,
+              popup = paste0("County Name: ", texas_dat$county_name, "<br>",
+                             "Median Income: $", round(texas_dat$median_income,0), "<br>",
+                             "Percentage Democratic Votes: ", round(texas_dat$percentage_dem, 1), "<br>",
+                             "Percentage Republican Votes: ", round(texas_dat$percentage_rep, 1))) %>%
+  addLegend(pal = mypaltx, 
+            values = texas_dat$diffDR, 
+            position = "bottomright", 
+            title = "Diff D-R",
+            labFormat = labelFormat(prefix = " "))
+texasmap
+```
+
+[Click here to see interactivity for Texas](txmap.html)
+
+```{r, echo=FALSE, warning=FALSE}
+# colorNumeric is a function from the leaflet package
+mypalny <- colorNumeric(
+  palette = "RdBu",
+  domain = newyork_dat$diffDR
+)
+
+newyorkmap <-leaflet(newyorkcollege) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(lat = 43, lng = -75, zoom = 6) %>%
+  # get lat and long for Antonio's from geocode() in first code chunk above
+  addMarkers(~Lng, ~Lat,
+             popup = paste0("College Name: ", newyorkcollege$Name, "<br>",
+                                        "Size: ", newyorkcollege$Size, "<br>",
+                                        "Type: ", newyorkcollege$Type, "<br>",
+                            "Number of Donations: ", newyorkcollege$Donations, "<br>",
+                            "Percentage Democratic Donations: ", newyorkcollege$Percentage_Democratic, "<br>",
+                            "Percentage Republican Donations: ", newyorkcollege$Percentage_Republican, "<br>",
+                            "Percentage Nonpartisan Donations: ", newyorkcollege$Percentage_Nonpartisan),
+             icon = ~partyIcons[majority])%>%
+  addPolygons(data = newyork_dat, 
+              fillColor = ~mypalny(diffDR),
+              color = "#b2aeae", #color needs to be in hex format
+              fillOpacity = 0.7, 
+              weight = 1, 
+              smoothFactor = 0.2,
+              popup = paste0("County Name: ", newyork_dat$county_name, "<br>",
+                             "Median Income: $", round(newyork_dat$median_income,0), "<br>",
+                             "Percentage Democratic Votes: ", round(newyork_dat$percentage_dem, 1), "<br>",
+                             "Percentage Republican Votes: ", round(newyork_dat$percentage_rep, 1))) %>%
+  addLegend(pal = mypalny, 
+            values = newyork_dat$diffDR, 
+            position = "bottomright", 
+            title = "Diff D-R",
+            labFormat = labelFormat(prefix = " "))
+
+newyorkmap
+```
+
+[Click here to see interactivity for New York](nymap.html)
+
+```{r, echo=FALSE, warning=FALSE}
+# colorNumeric is a function from the leaflet package
+mypaloh <- colorNumeric(
+  palette = "RdBu",
+  domain = ohio_dat$diffDR
+)
+
+ohiomap <-leaflet(ohiocollege) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(lat = 40, lng = -82, zoom = 7) %>%
+  # get lat and long for Antonio's from geocode() in first code chunk above
+  addMarkers(~Lng, ~Lat,
+             popup = paste0("College Name: ", ohiocollege$Name, "<br>",
+                                        "Size: ", ohiocollege$Size, "<br>",
+                                        "Type: ", ohiocollege$Type, "<br>",
+                            "Number of Donations: ", ohiocollege$Donations, "<br>",
+                            "Percentage Democratic Donations: ", ohiocollege$Percentage_Democratic, "<br>",
+                            "Percentage Republican Donations: ", ohiocollege$Percentage_Republican, "<br>",
+                            "Percentage Nonpartisan Donations: ", ohiocollege$Percentage_Nonpartisan),
+             icon = ~partyIcons[majority])%>%
+  addPolygons(data = ohio_dat, 
+              fillColor = ~mypaloh(diffDR),
+              color = "#b2aeae", #color needs to be in hex format
+              fillOpacity = 0.7, 
+              weight = 1, 
+              smoothFactor = 0.2,
+              popup = paste0("County Name: ", ohio_dat$county_name, "<br>",
+                             "Median Income: $", round(ohio_dat$median_income,0), "<br>",
+                             "Percentage Democratic Votes: ", round(ohio_dat$percentage_dem, 1), "<br>",
+                             "Percentage Republican Votes: ", round(ohio_dat$percentage_rep, 1))) %>%
+  addLegend(pal = mypaloh, 
+            values = ohio_dat$diffDR, 
+            position = "bottomright", 
+            title = "Diff D-R",
+            labFormat = labelFormat(prefix = " "))
+ohiomap
+```
+
+[Click here to see interactivity for Ohio](ohmap.html)
+
+From the interactive choropleths that we created, we see similar trends for all three states, individuals from the institutions of higher education (that we selected) tendd to make more donations towards democratically affiliated political organizations, regardless of the political leaning of the county that they reside in. 
+
+### A look at who's donating 
+
+Professors and Researchers were among the top donors from the institutions that we looked at which were from Ohio.
+
+```{r, echo=FALSE}
+#OH Top 10 Donations
+ohio2%>%
+  group_by(contributor_occupation)%>%
+  count(sort=TRUE)%>%
+  head(10) %>%
+ggplot(aes(x=reorder(contributor_occupation,n), y=n, color = contributor_occupation, fill=contributor_occupation)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Number of Donations"
+       , title="Who's Donating From Ohio Institutions")+
+  guides(color = "none", fill = "none")
+```
+
+Professors and Legal Assisants were among the top donors from the institutions that we looked at which were from Texas.
+ 
+```{r, echo=FALSE}
+#TX Top 10 Donations
+texas2%>%
+  group_by(contributor_occupation)%>%
+  count(sort=TRUE)%>%
+  head(10) %>%
+ggplot(aes(x=reorder(contributor_occupation,n), y=n, color = contributor_occupation, fill=contributor_occupation)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Number of Donations"
+       , title="Who's Donating From Texas Institutions")+
+  guides(color = "none", fill = "none")
+```
+
+IT Support Associates, professors, and technical writers were among the top donors from the institutions that we looked at which were from New York.
+ 
+```{r, echo=FALSE}
+#NY Top 10 Donations
+newyork2%>%
+  group_by(contributor_occupation)%>%
+  count(sort=TRUE)%>%
+  head(10) %>%
+ggplot(aes(x=reorder(contributor_occupation,n), y=n, color = contributor_occupation, fill=contributor_occupation)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(y = "Number of Donations"
+       , title="Who's Donating From New York Institutions")+
+  guides(color = "none", fill = "none")
+
+```
+
+## Institutions and Donations
+
+Now, looking at the number of donations that individuals from each institution gave, we see that:
+
+```{r, echo=FALSE, results='asis', warning=FALSE}
+#OH Donations by College
+kable(table%>%
+        filter(StateAbbr=="OH")%>%
+  group_by(Name)%>%
+  summarize(
+      Donations = Donations
+  ), caption= "Ohio Institutions")
+
+```
+
+The individuals from the institutions in Ohio made over 1,000 individual donations to ACTBLUE (19560), IT STARTS TODAY (6780), FRIENDS OF SHERROD BROWN (1165), SWING LEFT (1045), and DCCC (1035).
+
+```{r, echo=FALSE}
+#TX Donations by College
+kable(table%>%
+        filter(StateAbbr=="TX")%>%
+  group_by(Name)%>%
+  summarize(
+      Donations = Donations
+  ), caption= "Texas Institutions")
+```
+
+The individuals from the institutions in Texas made over 500 individual donations ACTBLUE (9538), BETO FOR TEXAS	(794), and SWING LEFT	(779).
+
+```{r, echo=FALSE}
+#NY Donations by College
+kable(table%>%
+        filter(StateAbbr=="NY")%>%
+  group_by(Name)%>%
+  summarize(
+      Donations = Donations
+  ), caption= "New York Institutions")
+```
+
+The individuals from the institutions in New York made over 500 individual donations ACTBLUE	(15467), IT STARTS TODAY (14089), SWING LEFT	(710), and DCCC	(500).
+
+
+# Analysis
+
+Our analyses involved a few subjective decisions. To classify the political leaning each of the 386 FEC committees, we used the nonpartisan website ballotpedia. To classify a counties' leaning, we looked at the 2016 presidential election results. We computed the difference in % of Democratic Votes and % of Republican Votes and this was the basis of how we implemented the red/blue color scale seen in our maps. We decided that a 50/50 donation cutoff would not be a durable estimate, so our threshold was greater than 60% donations to one party to classify a region as Democratic-leaning or Republican-leaning.
+
+To classify the institutions as a Democratic or Repubican donating majority, we took looked at the % of donations going to Democratic committees, Repubican committees, and Nonpartisan committees from the individuals belonging to the respective institution.
+
+## Future Work
+
+Although our work provides interesting and important insight to the political leanings of institutions of higher education, it only scratches the surface of a very complex investigation. Our study was limited in that only 8-11 institutions per state were included, and only 3 states were explored. Furthermore, we classify the “political affiliation” of an institution by the percentage of donations given to Democratic and/or Republican campaigns. We recognize that this may not necessary holistically represent the political affiliation of the institution as a whole, but we believe that it is a good way to classify institutions (especially since voting records are not public information). In the future, this project could be extended to more states and more institutions so that a more complete investigation could be done. With more time (as we had to manually look up each committee donation), more institutions could be classified. With a larger amount of data, statistical analysis of the percentage of donations going to republican or democratic in comparison to an institution’s region could be possible, leading to a statistically valid conclusion (rather than anecdotal). We may also be interested in extending the capabilities of our interactive choropleth by adding an implementation involving Shiny in order to view the distributions of variables like the county median income, population demographic, etc. 
+
+# Conclusion
+
+Our primary goal was to explore whether or not the political affiliation of the region surrounding an institution had an effect on the political leanings of that institution. We also wanted to explore the general claim that institutions of higher education are usually liberal leaning. Although there are limitations to our study (to be discussed further), we found that all of the colleges we investigated were Democratic. Furthermore, we found the political affiliation of the region in which an institution resides to have no effect on the political affiliation of the majority of the members of the institution. Since all the institutions’ donations were majority Democratic, we explored whether the political affiliation of the region affected the percentage of Democratic donations –– we found the region’s political affiliation to have similarly no effect on the percentage of donations that were Democratic. 
